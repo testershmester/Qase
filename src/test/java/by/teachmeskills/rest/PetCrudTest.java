@@ -1,126 +1,72 @@
 package by.teachmeskills.rest;
 
+import by.teachmeskills.rest.clients.PetApiClient;
 import by.teachmeskills.rest.dto.Category;
 import by.teachmeskills.rest.dto.Pet;
 import by.teachmeskills.rest.dto.Status;
 import by.teachmeskills.rest.dto.Tag;
-import io.restassured.http.ContentType;
+import com.github.javafaker.Faker;
+import io.restassured.response.Response;
+import org.apache.http.HttpStatus;
 import org.testng.annotations.Test;
 
 import java.util.List;
 
-import static io.restassured.RestAssured.given;
+import static io.restassured.module.jsv.JsonSchemaValidator.matchesJsonSchemaInClasspath;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class PetCrudTest {
 
+    Faker faker = new Faker();
+    PetApiClient petApiClient = new PetApiClient();
+
     @Test
     public void createPetTest() {
-        Pet expectedPet = Pet.builder()
-                             .name("Pet Test Name")
-                             .category(Category.builder()
-                                               .name("Test Category")
-                                               .build())
-                             .photoUrls(List.of("Test Urls 1", "Test Urls 2"))
-                             .tags(List.of(Tag.builder()
-                                              .name("Test Tag")
-                                              .build()))
-                             .status(Status.available)
-                             .build();
+        Pet expectedPet = preparePet();
 
-        //POST PET /pet
-        Pet postActualPet = given().
-                                    contentType(ContentType.JSON).
-                                    accept(ContentType.JSON).
-                                    body(expectedPet).
-                                    log().ifValidationFails().
-                            when().
-                                    post("https://petstore.swagger.io/v2/pet").
-                            then().
-                                    statusCode(200).
-                                    log().ifValidationFails().
-                            extract().
-                                    body().as(Pet.class);
-
+        Pet postActualPet = petApiClient.postPet(expectedPet);
         assertPet(expectedPet, postActualPet);
 
-        //GET PET /pet/{petId}
-        Pet getActualPet = given().
-                                    contentType(ContentType.JSON).
-                                    accept(ContentType.JSON).
-                                    log().ifValidationFails().
-                                    pathParams("petId", postActualPet.getId()).
-                            when().
-                                    get("https://petstore.swagger.io/v2/pet/{petId}").
-                            then().
-                                    statusCode(200).
-                            extract().
-                                    body().as(Pet.class);
+        Pet getActualPet = petApiClient.getPet(postActualPet.getId());
         assertPet(expectedPet, getActualPet);
     }
 
     @Test
     public void updatePetTest() {
-        Pet expectedPet = Pet.builder()
-                             .name("Pet Test Name 1")
-                             .category(Category.builder()
-                                               .name("Test Category 1")
-                                               .build())
-                             .photoUrls(List.of("Test Urls 1 1", "Test Urls 2 1"))
-                             .tags(List.of(Tag.builder()
-                                              .name("Test Tag 1")
-                                              .build()))
-                             .status(Status.available)
-                             .build();
+        Pet expectedPet = preparePet();
 
-        //POST PET /pet (create pet for test)
-        Pet postActualPet = given().
-                                    contentType(ContentType.JSON).
-                                    accept(ContentType.JSON).
-                                    body(expectedPet).
-                                    log().ifValidationFails().
-                            when().
-                                    post("https://petstore.swagger.io/v2/pet").
-                            then().
-                                    statusCode(200).
-                                    log().ifValidationFails().
-                            extract().
-                                    body().as(Pet.class);
-
-        postActualPet.setName("Test Name Upd 1")
+        Pet postActualPet = petApiClient.postPet(expectedPet);
+        postActualPet.setName(faker.animal().name())
                      .setCategory(Category.builder()
                                           .name("Test Category 1 Upd")
                                           .build())
-                     .setPhotoUrls(List.of("Test Urls 1 Upd"));
-
-        //PUT PET /pet (update created pet with new data)
-        Pet putActualPet = given().
-                                    contentType(ContentType.JSON).
-                                    accept(ContentType.JSON).
-                                    body(postActualPet).
-                                    log().ifValidationFails().
-                            when().
-                                    put("https://petstore.swagger.io/v2/pet").
-                            then().
-                                    statusCode(200).
-                                    log().ifValidationFails().
-                            extract().
-                                    body().as(Pet.class);
-
-        //GET PET /pet/{petId}
-        Pet getUpdActualPet = given().
-                                    contentType(ContentType.JSON).
-                                    accept(ContentType.JSON).
-                                    log().ifValidationFails().
-                                    pathParams("petId", postActualPet.getId()).
-                            when().
-                                    get("https://petstore.swagger.io/v2/pet/{petId}").
-                            then().
-                                    statusCode(200).
-                            extract().
-                                    body().as(Pet.class);
-
+                     .setPhotoUrls(List.of(faker.internet().url()));
+        Pet putActualPet = petApiClient.putPet(postActualPet);
+        Pet getUpdActualPet = petApiClient.getPet(postActualPet.getId());
         assertPet(getUpdActualPet, putActualPet);
+    }
+
+    @Test
+    public void validateGetPetResponseAgainstSchemaTest() {
+        Pet expectedPet = preparePet();
+        Pet postActualPet = petApiClient.postPet(expectedPet);
+
+        Response petResponse = petApiClient.getPetResponse(postActualPet.getId());
+        petResponse.then().assertThat().body(matchesJsonSchemaInClasspath("pet-schema.json"));
+    }
+
+    @Test
+    public void deletePetTest() {
+        Pet expectedPet = preparePet();
+        Pet postActualPet = petApiClient.postPet(expectedPet);
+
+        petApiClient.deletePet(postActualPet.getId());
+
+        Response deletedPetResponse = petApiClient.getPetResponse(postActualPet.getId());
+        assertThat(deletedPetResponse.statusCode()).as("Status code is incorrect in case for request for deleted pet")
+                                                   .isEqualTo(HttpStatus.SC_NOT_FOUND);
+        assertThat(deletedPetResponse.body().jsonPath().getString("message")).as("Error message is incorrect")
+                                                                             .isEqualTo("Pet not found");
     }
 
     private void assertPet(Pet expectedPet, Pet postActualPet) {
@@ -131,5 +77,19 @@ public class PetCrudTest {
         assertThat(postActualPet.getId()).as("The \"id\" is not generated")
                                          .isNotNull()
                                          .isNotEqualTo(0);
+    }
+
+    private Pet preparePet() {
+        return Pet.builder()
+                  .name(faker.animal().name())
+                  .category(Category.builder()
+                                    .name("Test Category")
+                                    .build())
+                  .photoUrls(List.of(faker.internet().url(), faker.internet().url()))
+                  .tags(List.of(Tag.builder()
+                                   .name("Test Tag")
+                                   .build()))
+                  .status(Status.available)
+                  .build();
     }
 }
